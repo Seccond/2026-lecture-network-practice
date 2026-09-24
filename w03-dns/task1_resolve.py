@@ -22,6 +22,7 @@ address each time; the harness compares the *set of authoritative nameservers*
 you ended at for those, not the address.
 """
 import argparse, subprocess, sys
+from collections import namedtuple
 
 # Root servers. Everything starts here; there is no earlier step.
 ROOT_SERVERS = [
@@ -42,37 +43,110 @@ VERIFY_NAMES = [
 ]
 
 
+MAX_DEPTH = 20          # cap so a broken/looping zone can't hang the resolver
+
+# one parsed RR line: "example.com. 300 IN A 1.2.3.4" -> name ttl cls rtype rdata
+_Record = namedtuple("_Record", "name ttl rtype rdata")
+
+
+def _normalize(name):
+    # dig prints names with a trailing dot and mixed case - strip both
+    # so name comparisons don't silently fail
+    return name.rstrip(".").lower()
+
+
 class Resolver:
-    """Your iterative resolver.
+    """resolve(name) -> (address, path). Walks root -> TLD -> authoritative
+    by hand instead of letting a recursive resolver do it."""
 
-    The whole point is that you never ask a server to recurse for you.
-    You ask one server, it says "not mine, ask over there", and you go there.
+    def _ask(self, server, name, qtype="A"):
+        # query one server, no recursion. dig with +noall +answer +authority
+        # +additional prints all three sections back to back with no
+        # headers, so records are told apart by rtype in _classify, not by
+        # section. empty list = no response or nothing useful either way
+        # the caller just moves to the next server (R4)
+        try:
+            out = subprocess.run(
+                ["dig", f"@{server}", name, qtype, "+norecurse",
+                 "+noall", "+answer", "+authority", "+additional",
+                 "+time=2", "+tries=1"],
+                capture_output=True, text=True, timeout=5,
+            ).stdout
+        except subprocess.TimeoutExpired:
+            return []
 
-    Suggested shape - but it is yours to design:
+        records = []
+        for line in out.splitlines():
+            if line.startswith(";"):
+                continue                      # dig comment, e.g. ";; connection timed out"
+            parts = line.split()
+            if len(parts) < 5:
+                continue                      # blank line / not a record
+            rname, ttl, _cls, rtype, rdata = parts[:5]
+            records.append(_Record(_normalize(rname), ttl, rtype,
+                                    rdata.rstrip(".")))
+        return records
 
-        resolve(name) -> (address, path)
-            address : the A record you ended up with, as a string
-            path    : the servers you asked, in order, so you can show your work
-
-    Things you will hit, in roughly this order:
-
-    1.  A delegation gives you NS *names*, sometimes with glue A records and
-        sometimes without. No glue means you have to resolve that nameserver's
-        name first - which is another walk. Decide what you do there.
-    2.  A server may not answer. Try the next one rather than giving up.
-    3.  CNAMEs. The answer you get back may be a different name than the one
-        you asked for, and you have to start again with that name.
-    4.  Loops. Cap your depth.
-
-    If you shell out to dig, the flag you want is `+norecurse`, so that the
-    server you ask replies with a delegation instead of doing the work:
-
-        dig @198.41.0.4 www.korea.ac.kr +norecurse
-    """
+    def _classify(self, records, name, qtype):
+        # answer   - what we asked for, if this server had it
+        # cname    - different name, restart the walk with it (R5)
+        # ns_names - delegation: next zone's nameservers, by name
+        # glue     - {nameserver name: address} that came with the delegation
+        name = _normalize(name)
+        answer, cname = None, None
+        ns_names, glue = [], {}
+        for r in records:
+            if r.name == name and r.rtype == qtype:
+                answer = r.rdata
+            elif r.name == name and r.rtype == "CNAME":
+                cname = r.rdata
+            elif r.rtype == "NS":
+                ns_names.append(r.rdata)
+            elif r.rtype == "A":
+                glue[r.name] = r.rdata
+        return answer, cname, ns_names, glue
 
     def resolve(self, name):
-        raise NotImplementedError(
-            "Implement the iterative walk: root -> TLD -> authoritative")
+        path = []
+        servers = list(ROOT_SERVERS)     # R2: everything starts at the root
+        current = _normalize(name)
+
+        for _step in range(MAX_DEPTH):
+            records = []
+            for server in servers:
+                path.append(server)
+                records = self._ask(server, current)
+                if records:               # R4: got something - stop trying servers
+                    break
+            if not records:
+                raise RuntimeError(
+                    f"none of {servers} answered for {current!r}")
+
+            answer, cname, ns_names, glue = self._classify(records, current, "A")
+
+            if answer:
+                return answer, path
+
+            if cname:                     # R5: different name - start over at the root
+                current = cname
+                servers = list(ROOT_SERVERS)
+                continue
+
+            if not ns_names:
+                raise RuntimeError(
+                    f"{servers} gave neither an answer nor a delegation "
+                    f"for {current!r}")
+
+            # R3: use glue if any nameserver has it; only resolve a
+            # nameserver's own name when none of them do
+            next_servers = [glue[ns] for ns in ns_names if ns in glue]
+            if not next_servers:
+                ns_address, ns_path = self.resolve(ns_names[0])
+                path.extend(ns_path)
+                next_servers = [ns_address]
+            servers = next_servers
+
+        raise RuntimeError(f"gave up after {MAX_DEPTH} steps resolving {name!r}")
 
 
 # ------------------------------------------------------------------- harness
