@@ -10,7 +10,7 @@
 
 - 위임 응답(2번)과 정답 응답(6번)은 같은 DNS 응답 형식이고, 채워진 칸만 다르다. 위임은 Answer 0 · Authority에 NS 6개, 정답은 Answer에 A 1개였다.
 - 규칙: CNAME 체인 출발과 도착의 등록 도메인(`co.uk` 같은 접미사 고려)이 다르면 제3자. 12개 중 `www.wikipedia.org`(→ `wikimedia.org`)만 틀렸다. 둘 다 Wikimedia 재단 소유인데, 규칙은 이름만 보고 소유자는 보지 못한다.
-- CDN 사이트 10개 중 7개가 resolver나 네트워크(핫스팟 LG U+망 vs 카페 Wi-Fi KT망)에 따라 다른 주소를 받았다. 하지만 두 네트워크는 같은 자리에서 쟀고, 네트워크만 바꾸면 3/10, resolver만 바꾸면 7/10이었다. CDN은 사용자가 아니라 질문을 전달한 resolver를 보고 고르므로, claim (b)는 "사용자 근처"가 아니라 "resolver 근처"로만 뒷받침된다.
+- CDN 사이트 10개 중 7개가 resolver나 네트워크(핫스팟 LG U+망 vs 카페 Wi-Fi KT망)에 따라 다른 주소를 받았다. 하지만 두 네트워크는 같은 자리에서 쟀는데도 네트워크만 바꾸면 3/10, resolver만 바꾸면 7/10이 달라졌다. CDN은 물리적 위치가 아니라 네트워크(IP)를 보고 고르며, 어떤 IP를 보는지는 resolver마다 달랐다(Microsoft·Apple에서 Google은 두 망 모두 통신사 DNS와 같은 답을 받았고, Quad9은 달랐다). 그래서 claim (b)의 "사용자 근처"는 위치로는 확인되지 않는다.
 
 ## Task 3 · Cache
 
