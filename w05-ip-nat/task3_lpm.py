@@ -38,27 +38,27 @@ class LinearTable:
 
 
 class YourTable:
-    """Your table. Same three methods, same answers, fewer comparisons.
-
-    Addresses and networks are plain 32-bit ints here - no strings, no parsing,
-    so that the benchmark measures your lookup and nothing else.
-
-    Two directions worth knowing about before you pick one:
-
-      * group by prefix length. There are only 33 possible lengths, and you can
-        ask them in an order that lets you stop early.
-      * walk the address one bit at a time. Each bit takes you to at most one
-        child, so the work is bounded by the address width, not by the table size.
-
-    The second is what hardware does. The first is easier and often enough.
-    Say which you chose and what it cost you in memory.
-    """
+    # Group by prefix length: one dict {network: next_hop} per length that
+    # actually occurs. A lookup masks the address to each length, longest
+    # first, and the first dict hit is the longest match by construction -
+    # so it can stop there. Work is bounded by the number of distinct prefix
+    # lengths (at most 33, 7 in the bench table), not by the number of routes.
 
     def __init__(self):
-        raise NotImplementedError("write your table")
+        self.by_len = {}          # prefix_len -> {network: next_hop}
+        self.order = []           # (mask, dict), longest prefix first
 
     def add(self, network, prefix_len, next_hop):
-        raise NotImplementedError
+        if prefix_len not in self.by_len:
+            self.by_len[prefix_len] = {}
+            # rebuilt only when a new length appears - at most 33 times
+            self.order = [((0xFFFFFFFF << (32 - plen)) & 0xFFFFFFFF, self.by_len[plen])
+                          for plen in sorted(self.by_len, reverse=True)]
+        self.by_len[prefix_len][network] = next_hop
 
     def lookup(self, address):
-        raise NotImplementedError
+        for mask, routes in self.order:
+            hop = routes.get(address & mask)
+            if hop is not None:
+                return hop
+        return None
