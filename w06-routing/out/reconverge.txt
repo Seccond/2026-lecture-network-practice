@@ -1,0 +1,4 @@
+cut      r1 0.9 s   r2 9.9 s   r3 9.1 s   (time of each router's last route change after the cut)
+restore  r1 9.9 s   r2 1.0 s   r3 19.7 s   (back to the pre-cut tables: yes)
+cost     r1 0.9 s   r2 - s   r3 1.0 s   (r1 eth0 cost 10 -> 100, no link went down)
+silent   r1 36.6 s   r2 - s   r3 36.6 s   (r2 frozen, so it is not measured)

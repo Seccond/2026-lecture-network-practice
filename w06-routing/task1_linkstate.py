@@ -13,7 +13,7 @@ in the packet. Build it.
 
     python3 task1_linkstate.py --verify
 """
-import argparse
+import argparse, heapq
 
 # Undirected weighted graph: node -> {neighbour: cost}
 TOPOLOGY = {
@@ -29,26 +29,57 @@ TOPOLOGY = {
 def dijkstra(graph, source):
     """Shortest path cost from `source` to every node.
 
-    Return {node: cost}. Unreachable nodes must not appear.
-
-    You write the loop. `heapq` is allowed; `networkx` is not.
+    Return {node: cost}. Unreachable nodes must not appear, and neither does
+    the source itself.
     """
-    raise NotImplementedError("implement Dijkstra")
+    dist = _distances(graph, source)
+    dist.pop(source)
+    return dist
+
+
+def _distances(graph, source):
+    # plain Dijkstra, source included at cost 0
+    dist = {source: 0}
+    pq, done = [(0, source)], set()
+    while pq:
+        cost, node = heapq.heappop(pq)
+        if node in done:
+            continue                      # stale entry, a cheaper one won
+        done.add(node)
+        for nbr, w in graph[node].items():
+            if cost + w < dist.get(nbr, float("inf")):
+                dist[nbr] = cost + w
+                heapq.heappush(pq, (cost + w, nbr))
+    return dist
+
+
+def equal_cost_hops(graph, source):
+    """{destination: set of first hops on *some* shortest path}.
+
+    Walk the nodes in order of distance. A neighbour reached along a shortest
+    edge inherits the hops of the node it came from; the source's own
+    neighbours are their own first hop. Ties end up as sets of size > 1.
+    """
+    dist = _distances(graph, source)
+    hops = {source: set()}
+    for node in sorted(dist, key=dist.get):
+        for nbr, w in graph[node].items():
+            if nbr in dist and dist[node] + w == dist[nbr]:
+                hops.setdefault(nbr, set()).update(
+                    {nbr} if node == source else hops[node])
+    hops.pop(source)
+    return hops
 
 
 def forwarding_table(graph, source):
-    """What the router at `source` actually installs.
+    """What the router at `source` actually installs: {destination: first_hop}.
 
-    Return {destination: first_hop}, where first_hop is a **direct neighbour**
-    of `source` - the one interface a packet for that destination leaves by.
-
-    The source itself is not in the table. Neither are unreachable nodes.
-
-    The trap: it is easy to compute the full path and then take path[1]. That
-    works, but think about what a router does when two shortest paths tie, and
-    pick a rule. Say which in observation.md.
+    Tie rule: when several first hops reach a destination at the same cost,
+    install the one with the smallest name. Deterministic, so every run and
+    every router agrees - but it pins traffic to one link where an ECMP
+    router would split it across all of `equal_cost_hops`.
     """
-    raise NotImplementedError("implement the forwarding table")
+    return {dest: min(h) for dest, h in equal_cost_hops(graph, source).items()}
 
 
 def link_down(graph, a, b):
