@@ -52,41 +52,85 @@ class UnreliableChannel:
         return self.wire.pop(0)
 
 
+WINDOW = 16           # packets the sender may have unacked at once
+TIMEOUT = 10          # steps before an unacked packet is sent again
+
+
 class Sender:
-    """Your sender.
-
-    Requirements are in task1.md. The short version:
-
-      - break `data` into PAYLOAD-sized pieces and number them
-      - retransmit what is not acknowledged
-      - do not assume an ACK means what you think it means until you have
-        checked the number on it
-
-    You choose the protocol: stop-and-wait is the easiest to get right and the
-    slowest; a sliding window is the point of §3.4.3. Say which you chose and
-    why in observation.md.
-    """
+    # Selective Repeat (§3.4.3): up to WINDOW numbered packets in flight,
+    # each with its own timer. An ACK names one sequence number, so a lost
+    # packet costs one retransmission instead of the whole window (Go-Back-N).
+    # Packets on the wire: ("DATA", seq, payload) out, ("ACK", seq) back.
 
     def __init__(self, data_channel, ack_channel, data):
-        raise NotImplementedError("write your sender")
+        self.out, self.back = data_channel, ack_channel
+        self.chunks = [data[i:i + PAYLOAD] for i in range(0, len(data), PAYLOAD)]
+        self.acked = [False] * len(self.chunks)
+        self.base = 0             # oldest unacked seq
+        self.next_seq = 0         # next seq never sent before
+        self.sent_at = {}         # seq -> step it was last (re)sent
+        self.clock = 0
 
     def step(self):
         """Do one unit of work. Return False when you believe you are done."""
-        raise NotImplementedError
+        self.clock += 1
+
+        # ACKs: a duplicate or stale ACK is harmless - marking True twice
+        # changes nothing, and anything outside the window is ignored.
+        while (packet := self.back.receive()) is not None:
+            kind, seq = packet[0], packet[1]
+            if kind == "ACK" and self.base <= seq < self.next_seq:
+                self.acked[seq] = True
+                self.sent_at.pop(seq, None)
+        while self.base < len(self.chunks) and self.acked[self.base]:
+            self.base += 1
+
+        if self.base == len(self.chunks):
+            return False
+
+        # retransmit only the packets whose own timer ran out
+        for seq, t in list(self.sent_at.items()):
+            if self.clock - t >= TIMEOUT:
+                self._send(seq)
+
+        # fill the window with packets never sent before
+        while self.next_seq < min(self.base + WINDOW, len(self.chunks)):
+            self._send(self.next_seq)
+            self.next_seq += 1
+        return True
+
+    def _send(self, seq):
+        self.out.send(("DATA", seq, self.chunks[seq]))
+        self.sent_at[seq] = self.clock
 
 
 class Receiver:
-    """Your receiver. Hands back the reassembled bytes via `.data()`."""
+    # Buffers out-of-order packets and hands bytes up only in order. Every
+    # DATA packet is ACKed, duplicates included - a duplicate usually means
+    # our earlier ACK was lost, so staying silent would stall the sender.
 
     def __init__(self, data_channel, ack_channel):
-        raise NotImplementedError("write your receiver")
+        self.inp, self.back = data_channel, ack_channel
+        self.buffer = {}          # seq -> payload, not yet delivered
+        self.expected = 0         # next seq to deliver in order
+        self.delivered = bytearray()
 
     def step(self):
-        raise NotImplementedError
+        while (packet := self.inp.receive()) is not None:
+            kind, seq = packet[0], packet[1]
+            if kind != "DATA":
+                continue
+            self.back.send(("ACK", seq))
+            # already delivered or already buffered -> drop the copy
+            if seq >= self.expected and seq not in self.buffer:
+                self.buffer[seq] = packet[2]
+        while self.expected in self.buffer:
+            self.delivered += self.buffer.pop(self.expected)
+            self.expected += 1
 
     def data(self):
         """The bytes reassembled so far."""
-        raise NotImplementedError
+        return bytes(self.delivered)
 
 
 # ------------------------------------------------------------------- harness

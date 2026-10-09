@@ -39,26 +39,40 @@ class FixedWindow:
 
 
 class YourControl:
-    """Your congestion control.
+    # Slow start until the first loss, then AIMD with a gentler cut (x0.7
+    # instead of Reno's x0.5). The pipe holds ~20 packets and the queue 10,
+    # so loss means window > ~30; cutting to 0.7 lands near 21, just above
+    # the pipe, so the link never idles while the queue stays short.
+    # Halving would drop to ~15, below the pipe, and waste slots regrowing.
+    #
+    # A loss is seen only at timeout (3 RTT late), and one overflow drops a
+    # burst of packets. Reacting to each would cut the window many times for
+    # one congestion event, so losses within one window's worth of ACKs of a
+    # cut are treated as the same event.
 
-    Things worth knowing before you start:
-
-    * The link drains one packet per slot and the round trip is 20 slots, so
-      the pipe holds about 20 packets. Above that you are only filling a queue.
-    * The queue is 10 packets deep and drops from the tail. Filling it does not
-      make you faster - it makes you slower, and everybody behind you too.
-    * Cutting hard on every loss costs you throughput. Not cutting costs you
-      correctness. §3.7 is the argument about where between those to sit.
-    * You are allowed to grow differently before and after your first loss.
-      That distinction has a name in the textbook.
-    """
+    BACKOFF = 0.7
 
     def __init__(self):
-        self.window = 1
-        raise NotImplementedError("write your congestion control")
+        self.window = 1.0
+        self.slow_start = True
+        self.ignore = 0           # ACKs left before a new loss counts again
 
     def on_ack(self):
-        raise NotImplementedError
+        if self.ignore > 0:
+            self.ignore -= 1
+        if self.slow_start:
+            self.window += 1                  # doubles every RTT
+        else:
+            self.window += 1 / self.window    # +1 packet per RTT
 
     def on_loss(self):
-        raise NotImplementedError
+        if self.ignore > 0:
+            return
+        if self.slow_start:
+            # by the time the timeout fires, slow start has overshot badly
+            self.window /= 2
+            self.slow_start = False
+        else:
+            self.window *= self.BACKOFF
+        self.window = max(2.0, self.window)
+        self.ignore = int(self.window)
