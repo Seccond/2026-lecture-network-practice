@@ -1,0 +1,5 @@
+? (169.254.169.254) at (incomplete) on en0 [ethernet]
+? (172.20.10.1) at 76:d5:e8:10:c9:64 on en0 ifscope [ethernet]
+? (172.20.10.8) at b6:bb:f7:ae:7f:89 on en0 ifscope permanent [ethernet]
+? (172.20.10.15) at ff:ff:ff:ff:ff:ff on en0 ifscope [ethernet]
+mdns.mcast.net (224.0.0.251) at 1:0:5e:0:0:fb on en0 ifscope permanent [ethernet]

@@ -70,10 +70,47 @@ class YourSwitch:
     you know comes from the frames you have already handled.
     """
 
+    # Two decisions, each with its own evidence:
+    #
+    #   * eviction - least recently used. `table` is kept in use order: an
+    #     entry moves to the end whenever its station sends, or a frame is
+    #     forwarded to it. The front is the one nobody has needed longest.
+    #   * admission - a newcomer only replaces that victim if it has been
+    #     heard from (as source or destination) more often. `seen` counts
+    #     every MAC ever mentioned; it is outside the table, so it does not
+    #     count against `capacity`. A station that speaks once never pushes
+    #     out a busy one; it is flooded to instead, which costs less.
+    #
+    # Stations never move on this trace, but a known station's port is still
+    # overwritten on every frame, so correctness does not depend on that.
+
     BROADCAST = "ff:ff:ff:ff:ff:ff"
 
     def __init__(self, ports, capacity):
-        raise NotImplementedError("write your switch")
+        self.ports = ports
+        self.capacity = capacity
+        self.table = OrderedDict()                 # mac -> port, use order
+        self.seen = {}                             # mac -> times mentioned
 
     def handle(self, frame, in_port):
-        raise NotImplementedError
+        src, dst, now = frame
+        self.seen[src] = self.seen.get(src, 0) + 1
+        if dst != self.BROADCAST:
+            self.seen[dst] = self.seen.get(dst, 0) + 1
+
+        if src in self.table:
+            self.table[src] = in_port
+            self.table.move_to_end(src)
+        elif len(self.table) < self.capacity:
+            self.table[src] = in_port
+        else:
+            victim = next(iter(self.table))
+            if self.seen[src] > self.seen[victim]:  # otherwise decline
+                del self.table[victim]
+                self.table[src] = in_port
+
+        if dst == self.BROADCAST or dst not in self.table:
+            return [p for p in range(self.ports) if p != in_port]
+        self.table.move_to_end(dst)
+        out = self.table[dst]
+        return [] if out == in_port else [out]

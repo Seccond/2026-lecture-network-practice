@@ -1,0 +1,2 @@
+? (172.20.10.1) at 76:d5:e8:10:c9:64 on en0 ifscope [ethernet]
+? (172.20.10.8) at b6:bb:f7:ae:7f:89 on en0 ifscope permanent [ethernet]
